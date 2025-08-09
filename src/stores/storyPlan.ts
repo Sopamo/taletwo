@@ -19,20 +19,24 @@ export const useStoryPlanStore = defineStore('storyPlan', () => {
   // Clean up legacy invalid value like "[object Object]"
   if (typeof window !== 'undefined') {
     try {
-      const raw = window.localStorage.getItem('storyarc.plan')
-      if (raw && raw.startsWith('[object')) {
+      const rawNew = window.localStorage.getItem('taletwo.plan')
+      if (rawNew && rawNew.startsWith('[object')) {
+        window.localStorage.removeItem('taletwo.plan')
+      }
+      const rawOld = window.localStorage.getItem('storyarc.plan')
+      if (rawOld && rawOld.startsWith('[object')) {
         window.localStorage.removeItem('storyarc.plan')
       }
     } catch {}
   }
 
-  const plan = useStorage<StoryPlan | null>('storyarc.plan', null, undefined, {
+  const plan = useStorage<StoryPlan | null>('taletwo.plan', null, undefined, {
     serializer: StorageSerializers.object,
   })
-  const loading = useStorage<boolean>('storyarc.plan.loading', false)
-  const error = useStorage<string | null>('storyarc.plan.error', null)
-  const curPoint = useStorage<number>('storyarc.plan.curPoint', 0)
-  const curSub = useStorage<number>('storyarc.plan.curSub', 0)
+  const loading = useStorage<boolean>('taletwo.plan.loading', false)
+  const error = useStorage<string | null>('taletwo.plan.error', null)
+  const curPoint = useStorage<number>('taletwo.plan.curPoint', 0)
+  const curSub = useStorage<number>('taletwo.plan.curSub', 0)
 
   function resetProgress() {
     curPoint.value = 0
@@ -62,11 +66,10 @@ export const useStoryPlanStore = defineStore('storyPlan', () => {
         role: 'system',
         content: [
           buildPlannerSystemPromptFromConfig({
+            books: cfg.books,
             world: cfg.world,
-            inspirations: cfg.inspirations,
-            likedCharacters: cfg.likedCharacters,
+            mainCharacter: cfg.mainCharacter,
             genre: cfg.genre,
-            tone: cfg.tone,
           }),
           'Act as a narrative planner. Think deeply about a non-obvious core conflict and an overall idea for what the story ultimately wants to say. Then outline 6-9 high-level story points that trace a coherent story arc (e.g., setup, inciting incident, rising tension, midpoint, crisis, climax, resolution).',
           'This prompt is only about planning the story points; do not mention or consider reader choices or options.',
@@ -116,11 +119,10 @@ export const useStoryPlanStore = defineStore('storyPlan', () => {
       role: 'system',
       content: [
         buildPlannerSystemPromptFromConfig({
+          books: cfg.books,
           world: cfg.world,
-          inspirations: cfg.inspirations,
-          likedCharacters: cfg.likedCharacters,
+          mainCharacter: cfg.mainCharacter,
           genre: cfg.genre,
-          tone: cfg.tone,
         }),
         'You will expand story points into actionable sub-steps to guide narrative progression. Keep sub-steps brief (one line) and concrete.',
         'Respond strictly as JSON: {"items": [{"index": number, "substeps": [string, ...]}]}',

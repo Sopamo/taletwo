@@ -6,26 +6,26 @@ import UserInput from '@/components/UserInput.vue'
 import { chat, type ChatMessage } from '@/lib/llm'
 import { useStoryConfigStore } from '@/stores/storyConfig'
 import { useStoryPlanStore } from '@/stores/storyPlan'
+import { useStoryStore } from '@/stores/story'
 
 // Steps for guided configuration
 const steps = [
+  {
+    id: 'books',
+    label: 'Books',
+    hint: 'Enter exactly two books you love and want to blend (comma-separated).',
+  },
   {
     id: 'world',
     label: 'World',
     hint: 'One or two sentences describing the setting, era, vibe, conflicts.',
   },
   {
-    id: 'inspirations',
-    label: 'Inspirations',
-    hint: 'Comma-separated list of 2-5 books/films/games/authors.',
-  },
-  {
-    id: 'likedCharacters',
-    label: 'Liked Characters',
-    hint: 'Comma-separated names or archetypes you enjoy.',
+    id: 'mainCharacter',
+    label: 'Main Character',
+    hint: 'Who is the protagonist? A name and a word or two describing them is fine.',
   },
   { id: 'genre', label: 'Genre', hint: 'One short genre, e.g. fantasy, sci-fi, mystery, etc.' },
-  { id: 'tone', label: 'Tone', hint: 'One short tone, e.g. whimsical, gritty, romantic, etc.' },
 ] as const
 
 type StepId = (typeof steps)[number]['id']
@@ -33,6 +33,7 @@ type StepId = (typeof steps)[number]['id']
 const router = useRouter()
 const cfg = useStoryConfigStore()
 const plan = useStoryPlanStore()
+const story = useStoryStore()
 
 const idx = ref(0)
 const question = ref('')
@@ -46,12 +47,33 @@ const isLast = computed(() => idx.value === steps.length - 1)
 
 function snapshotConfig() {
   return {
+    books: cfg.books?.length ? cfg.books : undefined,
     world: cfg.world || undefined,
-    inspirations: cfg.inspirations?.length ? cfg.inspirations : undefined,
-    likedCharacters: cfg.likedCharacters?.length ? cfg.likedCharacters : undefined,
+    mainCharacter: cfg.mainCharacter || undefined,
     genre: cfg.genre || undefined,
-    tone: cfg.tone || undefined,
   }
+}
+
+function startNewBook() {
+  // Clear current story, plan, and configuration
+  try {
+    story.reset()
+  } catch {}
+  try {
+    plan.resetAll()
+  } catch {}
+  try {
+    cfg.reset()
+  } catch {}
+
+  // Abort any in-flight suggestions and reset guided state
+  controller?.abort()
+  controller = null
+  idx.value = 0
+  options.value = []
+  question.value = ''
+  error.value = null
+  fetchSuggestions()
 }
 
 function csvToArray(text: string): string[] {
@@ -62,11 +84,10 @@ function csvToArray(text: string): string[] {
 }
 
 function commitValue(stepId: StepId, value: string) {
-  if (stepId === 'world') cfg.world = value
-  else if (stepId === 'inspirations') cfg.inspirations = csvToArray(value)
-  else if (stepId === 'likedCharacters') cfg.likedCharacters = csvToArray(value)
+  if (stepId === 'books') cfg.books = csvToArray(value)
+  else if (stepId === 'world') cfg.world = value
+  else if (stepId === 'mainCharacter') cfg.mainCharacter = value
   else if (stepId === 'genre') cfg.genre = value
-  else if (stepId === 'tone') cfg.tone = value
 }
 
 async function fetchSuggestions() {
@@ -140,7 +161,7 @@ function next() {
   } else {
     // Completed all steps — go to plan-loading to prepare the story plan before play
     if (cfg.isComplete) router.push({ name: 'plan-loading' })
-    else router.push({ name: 'configure' })
+    else router.push({ name: 'configure-guided' })
   }
 }
 
@@ -161,6 +182,26 @@ watchEffect(() => {
 
 <template>
   <div class="mx-auto max-w-3xl w-full px-4 py-6 space-y-6">
+    <div v-if="cfg.isComplete || story.hasStarted" class="rounded-md border border-amber-600/30 bg-amber-950/30 p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold">Current setup</h3>
+          <p class="text-xs text-amber-300/90">Starting a new book will override the current one.</p>
+        </div>
+        <button
+          @click="startNewBook"
+          class="px-3 py-1.5 text-sm rounded-md bg-amber-600 hover:bg-amber-500 text-black font-medium"
+        >
+          Start new book
+        </button>
+      </div>
+      <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-slate-300">
+        <div><span class="text-slate-400">Books:</span> {{ (cfg.books || []).join(', ') || '—' }}</div>
+        <div><span class="text-slate-400">World:</span> {{ cfg.world || '—' }}</div>
+        <div><span class="text-slate-400">Main character:</span> {{ cfg.mainCharacter || '—' }}</div>
+        <div><span class="text-slate-400">Genre:</span> {{ cfg.genre || '—' }}</div>
+      </div>
+    </div>
     <div class="flex items-center justify-between">
       <div>
         <h2 class="text-2xl font-semibold tracking-tight">Guided setup</h2>
@@ -196,7 +237,6 @@ watchEffect(() => {
     <div class="pt-2">
       <UserInput
         :placeholder="'Or type your own for ' + currentStep.label.toLowerCase() + '…'"
-        :disabled="loading"
         @submit="onSubmitFreeform"
       />
       <p class="text-xs text-slate-500 mt-1">Hint: {{ currentStep.hint }}</p>

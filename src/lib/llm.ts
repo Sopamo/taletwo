@@ -1,7 +1,7 @@
 /*
   Simple OpenAI chat client using fetch.
-  Reads configuration from Vite env variables:
-    - VITE_OPENAI_API_KEY (required)
+  Configuration:
+    - OpenAI API key: stored in localStorage via `getApiKey()` from `@/lib/apiKey`.
     - VITE_OPENAI_BASE_URL (optional, defaults to https://api.openai.com/v1)
     - VITE_OPENAI_MODEL (optional, defaults to 'gpt-4o-mini')
 */
@@ -24,14 +24,39 @@ export type ChatResponse = {
   raw: any
 }
 
-const API_KEY = import.meta.env.VITE_OPENAI_API_KEY as string | undefined
+import { getApiKey } from '@/lib/apiKey'
 const BASE_URL =
   (import.meta.env.VITE_OPENAI_BASE_URL as string | undefined) ?? 'https://api.openai.com/v1'
 const DEFAULT_MODEL = (import.meta.env.VITE_OPENAI_MODEL as string | undefined) ?? 'gpt-5'
 
 function assertApiKey() {
-  if (!API_KEY) {
-    throw new Error('Missing VITE_OPENAI_API_KEY. Add it to your .env file.')
+  const key = getApiKey()
+  if (!key) {
+    throw new Error('Missing OpenAI API key. Please enter it on the Taletwo screen.')
+  }
+}
+
+// Lightweight API key validation: calls the Models list endpoint, which does not consume tokens.
+export async function checkApiKeyValid(key: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${BASE_URL}/models`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${key}`,
+    },
+    signal,
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const data = await res.json()
+      detail = data?.error?.message || JSON.stringify(data)
+    } catch {
+      try {
+        detail = await res.text()
+      } catch {}
+    }
+    const msg = detail ? `OpenAI key validation failed (${res.status}): ${detail}` : `OpenAI key validation failed (${res.status}).`
+    throw new Error(msg)
   }
 }
 
@@ -48,11 +73,12 @@ export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Pro
   if (opts.response_format) body.response_format = opts.response_format
   if (opts.reasoning_effort) body.reasoning_effort = opts.reasoning_effort
 
+  const apiKey = getApiKey()!
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
     signal: opts.signal,
@@ -69,41 +95,35 @@ export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Pro
 }
 
 export function buildSystemPromptFromConfig(config: {
+  books?: string[]
   world?: string
-  inspirations?: string[]
-  likedCharacters?: string[]
+  mainCharacter?: string
   genre?: string
-  tone?: string
 }): string {
   const parts: string[] = [
     'You are the narrative engine for a choose-your-own-adventure story. Generate vivid, concise prose.',
     'Always return exactly three next-action options: progress, unexpected, other. Keep options short.',
   ]
+  if (config.books?.length) parts.push(`Books to blend: ${config.books.join(', ')}`)
   if (config.world) parts.push(`World: ${config.world}`)
-  if (config.inspirations?.length) parts.push(`Inspirations: ${config.inspirations.join(', ')}`)
-  if (config.likedCharacters?.length)
-    parts.push(`Liked characters: ${config.likedCharacters.join(', ')}`)
+  if (config.mainCharacter) parts.push(`Main character: ${config.mainCharacter}`)
   if (config.genre) parts.push(`Genre: ${config.genre}`)
-  if (config.tone) parts.push(`Tone: ${config.tone}`)
   return parts.join('\n')
 }
 
 // Planner-specific builder: no choice/option instructions; used for plan + substeps generation
 export function buildPlannerSystemPromptFromConfig(config: {
+  books?: string[]
   world?: string
-  inspirations?: string[]
-  likedCharacters?: string[]
+  mainCharacter?: string
   genre?: string
-  tone?: string
 }): string {
   const parts: string[] = [
     'You are a narrative planner. Design coherent story structure and guidance for an authoring system.',
   ]
+  if (config.books?.length) parts.push(`Books to blend: ${config.books.join(', ')}`)
   if (config.world) parts.push(`World: ${config.world}`)
-  if (config.inspirations?.length) parts.push(`Inspirations: ${config.inspirations.join(', ')}`)
-  if (config.likedCharacters?.length)
-    parts.push(`Liked characters: ${config.likedCharacters.join(', ')}`)
+  if (config.mainCharacter) parts.push(`Main character: ${config.mainCharacter}`)
   if (config.genre) parts.push(`Genre: ${config.genre}`)
-  if (config.tone) parts.push(`Tone: ${config.tone}`)
   return parts.join('\n')
 }

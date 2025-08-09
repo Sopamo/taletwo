@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { hasApiKey } from '@/lib/apiKey'
 import { useStoryConfigStore } from '@/stores/storyConfig'
 import { useStoryPlanStore } from '@/stores/storyPlan'
 
@@ -7,11 +8,6 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'configure',
-      component: () => import('@/views/ConfigureView.vue'),
-    },
-    {
-      path: '/configure/guided',
       name: 'configure-guided',
       component: () => import('@/views/GuidedConfigureView.vue'),
     },
@@ -25,21 +21,25 @@ const router = createRouter({
       name: 'plan-loading',
       component: () => import('@/views/PlanLoadingView.vue'),
     },
+    {
+      path: '/taletwo',
+      name: 'taletwo',
+      component: () => import('@/views/TaletwoView.vue'),
+    },
   ],
 })
 
 router.beforeEach((to) => {
   const cfg = useStoryConfigStore()
   const plan = useStoryPlanStore()
+  // Require API key for all routes except the Taletwo key entry page
+  if (to.name !== 'taletwo' && !hasApiKey()) {
+    return { name: 'taletwo', query: { redirect: to.fullPath } }
+  }
   if (to.name === 'play') {
     if (!cfg.isComplete) return { name: 'configure-guided' }
     // Ensure plan is ready before entering play
     if (!plan.isReady()) return { name: 'plan-loading' }
-  }
-  if (to.name === 'configure') {
-    const firstTime =
-      !cfg.world && !cfg.genre && !cfg.tone && (!cfg.inspirations?.length) && (!cfg.likedCharacters?.length)
-    if (firstTime) return { name: 'configure-guided' }
   }
 })
 

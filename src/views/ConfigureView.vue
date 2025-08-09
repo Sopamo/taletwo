@@ -8,14 +8,9 @@ const cfg = useStoryConfigStore()
 
 // Local editable fields
 const world = ref(cfg.world)
-const inspirationsText = ref(cfg.inspirations.join(', '))
-const likedCharactersText = ref(cfg.likedCharacters.join(', '))
+const booksText = ref((cfg.books || []).join(', '))
+const mainCharacter = ref(cfg.mainCharacter)
 const genre = ref(cfg.genre)
-const tone = ref(cfg.tone)
-
-const canContinue = computed(() => {
-  return world.value.trim().length > 0 && genre.value.trim().length > 0 && tone.value.trim().length > 0
-})
 
 function parseCSV(text: string): string[] {
   return text
@@ -27,28 +22,36 @@ function parseCSV(text: string): string[] {
 function save() {
   cfg.setAll({
     world: world.value,
-    inspirations: parseCSV(inspirationsText.value),
-    likedCharacters: parseCSV(likedCharactersText.value),
+    books: parseCSV(booksText.value),
+    mainCharacter: mainCharacter.value,
     genre: genre.value,
-    tone: tone.value,
   })
 }
 
 function start() {
   save()
   if (cfg.isComplete) {
-    router.push({ name: 'play' })
+    router.push({ name: 'plan-loading' })
   }
 }
 
 // keep store in sync if user types and navigates away accidentally
-watch([world, inspirationsText, likedCharactersText, genre, tone], save)
+watch([world, booksText, mainCharacter, genre], save)
+
+const canContinue = computed(() => {
+  return (
+    world.value.trim().length > 0 &&
+    parseCSV(booksText.value).length >= 2 &&
+    mainCharacter.value.trim().length > 0 &&
+    genre.value.trim().length > 0
+  )
+})
 </script>
 
 <template>
   <div class="mx-auto max-w-3xl w-full px-4 py-6">
     <h2 class="text-2xl font-semibold tracking-tight mb-2">Configure your story</h2>
-    <p class="text-sm text-slate-400 mb-6">Set the world, inspirations, characters, genre, and tone. These are persisted locally.</p>
+    <p class="text-sm text-slate-400 mb-6">Set the world, two books to blend, a main character, and a genre. These are persisted locally.</p>
 
     <div class="space-y-5">
       <div>
@@ -58,25 +61,21 @@ watch([world, inspirationsText, likedCharactersText, genre, tone], save)
       </div>
 
       <div>
-        <label class="block text-sm font-medium mb-1">Inspirations (comma separated)</label>
-        <input v-model="inspirationsText" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
-        <p class="text-xs text-slate-500 mt-1">Books, films, games, authors that should influence the style.</p>
+        <label class="block text-sm font-medium mb-1">Books (comma separated, exactly two)</label>
+        <input v-model="booksText" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
+        <p class="text-xs text-slate-500 mt-1">Enter two books you love and want to blend.</p>
       </div>
 
       <div>
-        <label class="block text-sm font-medium mb-1">Liked Characters (comma separated)</label>
-        <input v-model="likedCharactersText" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
-        <p class="text-xs text-slate-500 mt-1">Names or archetypes you enjoy.</p>
+        <label class="block text-sm font-medium mb-1">Main Character</label>
+        <input v-model="mainCharacter" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
+        <p class="text-xs text-slate-500 mt-1">Who is the protagonist? A name and a word or two describing them is fine.</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium mb-1">Genre</label>
           <input v-model="genre" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-1">Tone</label>
-          <input v-model="tone" class="w-full rounded-md bg-slate-900 border border-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-600" />
         </div>
       </div>
 
@@ -87,7 +86,7 @@ watch([world, inspirationsText, likedCharactersText, genre, tone], save)
         <button @click="save" class="inline-flex items-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-700">
           Save
         </button>
-        <span v-if="!canContinue" class="text-xs text-slate-500">World, Genre, and Tone are required.</span>
+        <span v-if="!canContinue" class="text-xs text-slate-500">World, two Books, Main Character, and Genre are required.</span>
       </div>
     </div>
   </div>

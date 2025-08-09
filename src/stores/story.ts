@@ -67,21 +67,21 @@ function coerceOptions(raw: any): string[] {
 }
 
 export const useStoryStore = defineStore('story', () => {
-  const text = useStorage<string>('storyarc.story.text', '')
-  const options = useStorage<string[]>('storyarc.story.options', [])
-  const summary = useStorage<string>('storyarc.story.summary', '')
-  const notes = useStorage<string[]>('storyarc.story.notes', [])
-  const loading = useStorage<boolean>('storyarc.story.loading', false)
-  const error = useStorage<string | null>('storyarc.story.error', null)
-  const turn = useStorage<number>('storyarc.story.turn', 0)
+  const text = useStorage<string>('taletwo.story.text', '')
+  const options = useStorage<string[]>('taletwo.story.options', [])
+  const summary = useStorage<string>('taletwo.story.summary', '')
+  const notes = useStorage<string[]>('taletwo.story.notes', [])
+  const loading = useStorage<boolean>('taletwo.story.loading', false)
+  const error = useStorage<string | null>('taletwo.story.error', null)
+  const turn = useStorage<number>('taletwo.story.turn', 0)
 
   // New paged flow state
-  const pages = useStorage<StoryPage[]>('storyarc.story.pages', [], undefined, {
+  const pages = useStorage<StoryPage[]>('taletwo.story.pages', [], undefined, {
     serializer: StorageSerializers.object,
   })
-  const index = useStorage<number>('storyarc.story.index', 0)
+  const index = useStorage<number>('taletwo.story.index', 0)
   const nextPrefetch = useStorage<GeneratedPage | null>(
-    'storyarc.story.nextPrefetch',
+    'taletwo.story.nextPrefetch',
     null,
     undefined,
     {
@@ -90,7 +90,7 @@ export const useStoryStore = defineStore('story', () => {
   )
   // Map: baseKey (page index string) -> { optionId: GeneratedPage }
   const branchPrefetch = useStorage<Record<string, Record<string, GeneratedPage>>>(
-    'storyarc.story.branchPrefetch',
+    'taletwo.story.branchPrefetch',
     {},
     undefined,
     { serializer: StorageSerializers.object },
@@ -171,11 +171,10 @@ export const useStoryStore = defineStore('story', () => {
       role: 'system',
       content: [
         buildSystemPromptFromConfig({
+          books: cfg.books,
           world: cfg.world,
-          inspirations: cfg.inspirations,
-          likedCharacters: cfg.likedCharacters,
+          mainCharacter: cfg.mainCharacter,
           genre: cfg.genre,
-          tone: cfg.tone,
         }),
         // Subtle focus directive for this turn
         chosen === 'substep' && subToAdvance
@@ -225,7 +224,7 @@ export const useStoryStore = defineStore('story', () => {
       const pathLabel = opts.nextChoice ? `branch: ${opts.nextChoice}` : 'linear'
       const mode = opts.background ? 'prefetch' : 'active'
       // eslint-disable-next-line no-console
-      console.groupCollapsed(`[StoryArc] generatePage (${mode}) path=${pathLabel}`)
+      console.groupCollapsed(`[TaleTwo] generatePage (${mode}) path=${pathLabel}`)
       // eslint-disable-next-line no-console
       console.debug('Remembered notes:', notes.value)
       // eslint-disable-next-line no-console
@@ -547,6 +546,7 @@ export const useStoryStore = defineStore('story', () => {
     nextPrefetch,
     canGoPrev,
     canGoNext,
+    hasStarted,
     hasBranchPrefetchForCurrent,
     // actions
     reset,

@@ -40,7 +40,7 @@ function onNext() {
     <!-- Slim top bar with back chevron -->
     <div class="h-10 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur flex items-center">
       <div class="mx-auto w-full max-w-3xl px-4">
-        <RouterLink :to="{ name: 'configure' }" class="inline-flex items-center text-slate-300 hover:text-slate-100">
+        <RouterLink :to="{ name: 'configure-guided' }" class="inline-flex items-center text-slate-300 hover:text-slate-100">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
             <path fill-rule="evenodd" d="M15.53 4.47a.75.75 0 0 1 0 1.06L9.06 12l6.47 6.47a.75.75 0 1 1-1.06 1.06l-7-7a.75.75 0 0 1 0-1.06l7-7a.75.75 0 0 1 1.06 0Z" clip-rule="evenodd" />
           </svg>

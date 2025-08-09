@@ -1,10 +1,10 @@
-# StoryArc
+# TaleTwo
 
 This template should help get you started developing with Vue 3 in Vite.
 
 ## Project Overview
 
-StoryArc is a text-based, choose-your-own-adventure game. Players first configure the "vibe" of their story (world setting, inspirations, favorite characters, genres, tone), which is saved in a Pinia store and persisted to localStorage via useStorage. The app then uses the OpenAI API (GPT-5 or the latest available model) to generate the opening passage and three choices for what to do next, plus a concise summary of what happened in that passage. The player selects a choice, we send context back to the model, and the cycle repeats to continue the story.
+TaleTwo is a text-based, choose-your-own-adventure game. Players first configure the "vibe" of their story (world setting, inspirations, favorite characters, genres, tone), which is saved in a Pinia store and persisted to localStorage via useStorage. The app then uses the OpenAI API (GPT-5 or the latest available model) to generate the opening passage and three choices for what to do next, plus a concise summary of what happened in that passage. The player selects a choice, we send context back to the model, and the cycle repeats to continue the story.
 
 ### Core Flow
 
@@ -69,7 +69,7 @@ This keeps the UI logic simple and consistent.
 
 ## Project Description and Architecture Overview
 
-StoryArc is a complex application that utilizes multiple technologies to provide a seamless user experience. The application is built using Vue 3, Vite, and TypeScript, with Pinia for state management and @vueuse/core useStorage for local persistence. The OpenAI API is used to generate passages and options for the user.
+TaleTwo is a complex application that utilizes multiple technologies to provide a seamless user experience. The application is built using Vue 3, Vite, and TypeScript, with Pinia for state management and @vueuse/core useStorage for local persistence. The OpenAI API is used to generate passages and options for the user.
 
 The application's architecture is designed to be modular and scalable. The core flow of the application is divided into three main steps: configuration, passage generation, and iteration. The configuration step involves asking the user for input on the story's setting, inspirations, characters, genre, and tone. This information is then persisted to localStorage using Pinia and useStorage.
 
