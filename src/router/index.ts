@@ -1,45 +1,50 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { hasApiKey } from '@/lib/apiKey'
 import { useStoryConfigStore } from '@/stores/storyConfig'
-import { useStoryPlanStore } from '@/stores/storyPlan'
+import { useStoryStore } from '@/stores/story'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
+      name: 'home',
+      component: () => import('@/views/HomeView.vue'),
+    },
+    {
+      path: '/configure',
       name: 'configure-guided',
       component: () => import('@/views/GuidedConfigureView.vue'),
+      meta: { requiresAuth: true },
     },
     {
-      path: '/play',
-      name: 'play',
-      component: () => import('@/views/PlayView.vue'),
-    },
-    {
-      path: '/plan-loading',
+      path: '/loading',
       name: 'plan-loading',
       component: () => import('@/views/PlanLoadingView.vue'),
     },
     {
-      path: '/taletwo',
-      name: 'taletwo',
-      component: () => import('@/views/TaletwoView.vue'),
+      path: '/play/:bookId/:index',
+      name: 'play',
+      component: () => import('@/views/PlayView.vue'),
+      meta: { requiresAuth: true },
     },
+    // legacy routes removed: plan-loading, taletwo
   ],
 })
 
 router.beforeEach((to) => {
+  const auth = useAuthStore()
   const cfg = useStoryConfigStore()
-  const plan = useStoryPlanStore()
-  // Require API key for all routes except the Taletwo key entry page
-  if (to.name !== 'taletwo' && !hasApiKey()) {
-    return { name: 'taletwo', query: { redirect: to.fullPath } }
+  const story = useStoryStore()
+
+  // Auth gate
+  if (to.meta?.requiresAuth && !auth.user) {
+    return { name: 'home' }
   }
+
+  // Only require full config for play if story hasn't started yet
   if (to.name === 'play') {
-    if (!cfg.isComplete) return { name: 'configure-guided' }
-    // Ensure plan is ready before entering play
-    if (!plan.isReady()) return { name: 'plan-loading' }
+    if (!story.hasStarted && !cfg.isComplete) return { name: 'configure-guided' }
   }
 })
 

@@ -7,6 +7,8 @@ const props = defineProps<{
   title?: string
   choices: Choice[]
   disabled?: boolean
+  optionIds?: (string | number)[]
+  readyById?: Record<string | number, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -30,13 +32,18 @@ function keyOf(c: Choice, idx: number): string | number {
     </header>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-      <ChoiceButton
-        v-for="(c, idx) in props.choices"
-        :key="keyOf(c, idx)"
-        :label="labelOf(c)"
-        :disabled="props.disabled"
-        @click="emit('select', labelOf(c))"
-      />
+      <div v-for="(c, idx) in props.choices" :key="keyOf(c, idx)" class="relative">
+        <ChoiceButton
+          :label="labelOf(c)"
+          :disabled="
+            props.disabled ||
+            (props.optionIds &&
+              props.optionIds[idx] !== undefined &&
+              !props.readyById?.[props.optionIds[idx]!])
+          "
+          @click="emit('select', labelOf(c))"
+        />
+      </div>
     </div>
   </section>
 </template>

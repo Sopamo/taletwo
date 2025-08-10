@@ -1,0 +1,21 @@
+# Ignore VCS
+.git
+.gitignore
+
+# OS
+.DS_Store
+
+# Dependencies and outputs
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun.lockb
+.dist
+build
+dist
+
+# IDE
+.vscode
+.idea

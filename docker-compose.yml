@@ -1,0 +1,31 @@
+version: '3.9'
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    image: oven/bun:1
+    working_dir: /app
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./backend:/app
+      - bun_cache:/root/.cache/bun
+    command: sh -c "bun install && bun run dev"
+    env_file:
+      - backend/.env
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MONGO_URL=${MONGO_URL:-mongodb://mongo:27017}
+      - MONGO_DB=${MONGO_DB:-taletwo}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+    depends_on:
+      - mongo
+volumes:
+  bun_cache:
+  mongo_data:

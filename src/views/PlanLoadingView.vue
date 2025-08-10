@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useStoryPlanStore } from '@/stores/storyPlan'
 import { useStoryStore } from '@/stores/story'
 
 const router = useRouter()
-const plan = useStoryPlanStore()
 const story = useStoryStore()
 const busy = ref(false)
 const err = ref<string | null>(null)
@@ -14,23 +12,17 @@ async function proceed() {
   busy.value = true
   err.value = null
   try {
-    await plan.ensureReady()
-    if (plan.isReady()) {
-      // Generate the first page while still on the loading screen
-      await story.startIfNeeded()
-      router.replace({ name: 'play' })
-    } else {
-      throw new Error('Plan could not be prepared')
-    }
+    await story.startIfNeeded()
+    const id = await story.ensureBook()
+    router.replace({ name: 'play', params: { bookId: id, index: 0 } })
   } catch (e: any) {
-    err.value = e?.message || 'Failed to prepare plan'
+    err.value = e?.message || 'Failed to start story'
   } finally {
     busy.value = false
   }
 }
 
 function regenerate() {
-  plan.resetAll()
   proceed()
 }
 
@@ -42,8 +34,8 @@ onMounted(() => {
 
 <template>
   <div class="mx-auto max-w-md w-full px-4 py-10 text-center space-y-4">
-    <h1 class="text-2xl font-semibold">Preparing your story plan…</h1>
-    <p class="text-slate-400">We’re outlining key story points and sub-steps to guide a cohesive narrative.</p>
+    <h1 class="text-2xl font-semibold">Preparing your story…</h1>
+    <p class="text-slate-400">We’re getting your adventure ready.</p>
 
     <div v-if="err" class="text-rose-400">{{ err }}</div>
 
