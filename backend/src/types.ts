@@ -13,6 +13,8 @@ export type StoryPage = {
   summary: string
   options?: string[]
   optionIds?: string[]
+  // When true, a choice was selected on this page; frontend should not show choice buttons for this page.
+  choiceMade?: boolean
 }
 
 export type StoryPoint = {

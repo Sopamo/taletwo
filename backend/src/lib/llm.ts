@@ -1,5 +1,4 @@
 import type { BookDoc, ConfigFieldId, ChatMessage } from '../types'
-import { appendFile } from 'node:fs/promises'
 
 type Suggestions = { question: string; options: string[] }
 
@@ -9,6 +8,7 @@ export type ChatOptions = {
   response_format?: any
   reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high'
   max_completion_tokens?: number
+  tag?: string
 }
 
 export async function chat(
@@ -26,43 +26,50 @@ export async function chat(
   if (typeof opts.max_completion_tokens === 'number')
     body.max_completion_tokens = opts.max_completion_tokens
 
-  // Log prompts to JSONL (non-fatal on error)
-  try {
-    const systemText = messages
-      .filter((m) => m.role === 'system')
-      .map((m) => String((m as any).content ?? ''))
-      .join('\n---\n')
-    const userText = messages
-      .filter((m) => m.role === 'user')
-      .map((m) => String((m as any).content ?? ''))
-      .join('\n---\n')
-    const entry = {
-      ts: new Date().toISOString(),
-      kind: 'chat',
-      model: body.model,
-      options: {
-        response_format: body.response_format ?? null,
-        reasoning_effort: body.reasoning_effort ?? null,
-        max_completion_tokens: opts.max_completion_tokens ?? null,
-      },
-      system: systemText,
-      user: userText,
-    }
-    await appendFile('promptLogs.jsonl', JSON.stringify(entry) + '\n').catch(() => {})
-  } catch {}
+  // Prompt body logging to file disabled; using stdout timing only.
 
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`LLM error ${res.status}: ${text}`)
+  const started = Date.now()
+  try {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+    })
+    const ms = Date.now() - started
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      console.error(
+        `[LLM ERROR] tag=${opts.tag ?? 'chat'} model=${body.model} ms=${ms} status=${res.status} reason=${(text || '').slice(0, 200)}`,
+      )
+      throw new Error(`LLM error ${res.status}: ${text}`)
+    }
+    const data = await res.json()
+    const content: string = data?.choices?.[0]?.message?.content ?? ''
+    const systemChars = messages
+      .filter((m) => m.role === 'system')
+      .map((m) => String((m as any).content ?? '').length)
+      .reduce((a, b) => a + b, 0)
+    const userChars = messages
+      .filter((m) => m.role === 'user')
+      .map((m) => String((m as any).content ?? '').length)
+      .reduce((a, b) => a + b, 0)
+    console.log(
+      `[LLM] tag=${opts.tag ?? 'chat'} model=${body.model} ms=${ms} rf=${
+        body.response_format ? 'json' : 'none'
+      } re=${body.reasoning_effort ?? 'low'} maxTok=${
+        body.max_completion_tokens ?? 'n/a'
+      } sizes=(${systemChars},${userChars},${(content ?? '').length})`,
+    )
+    return { content }
+  } catch (e: any) {
+    const ms = Date.now() - started
+    console.error(
+      `[LLM EXC] tag=${opts.tag ?? 'chat'} model=${body.model} ms=${ms} err=${
+        e?.message || String(e)
+      }`,
+    )
+    throw e
   }
-  const data = await res.json()
-  const content: string = data?.choices?.[0]?.message?.content ?? ''
-  return { content }
 }
 
 // Prompt builders for planner and story generator
@@ -174,19 +181,9 @@ export async function getConfigSuggestions(
     response_format: { type: 'json_object' },
   }
 
-  // Log prompts to JSONL (non-fatal on error)
-  try {
-    const entry = {
-      ts: new Date().toISOString(),
-      kind: 'suggestions',
-      model,
-      options: { response_format: { type: 'json_object' } },
-      system: sys.content,
-      user: usr.content,
-    }
-    await appendFile('promptLogs.jsonl', JSON.stringify(entry) + '\n').catch(() => {})
-  } catch {}
+  // Prompt body logging disabled; using stdout timing only.
 
+  const started = Date.now()
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -195,14 +192,26 @@ export async function getConfigSuggestions(
     },
     body: JSON.stringify(body),
   })
+  const ms = Date.now() - started
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    console.error(
+      `[LLM SUGG ERROR] model=${model} ms=${ms} status=${res.status} reason=${(text || '').slice(
+        0,
+        200,
+      )}`,
+    )
     throw new Error(`LLM error ${res.status}: ${text}`)
   }
 
   const data = await res.json()
   const content: string = data?.choices?.[0]?.message?.content ?? ''
+  const sysChars = (sys.content ?? '').length
+  const usrChars = (usr.content ?? '').length
+  console.log(
+    `[LLM SUGG] model=${model} ms=${ms} sizes=(${sysChars},${usrChars},${(content ?? '').length})`,
+  )
   let parsed: any
   try {
     parsed = JSON.parse(content)

@@ -155,7 +155,7 @@ function onNext() {
             </div>
           </div>
           <ChoicesList
-            v-if="store.currentOptions.length === 3 && store.hasBranchPrefetchForCurrent"
+            v-if="store.index === store.pages.length - 1 && store.currentOptions.length === 3 && store.hasBranchPrefetchForCurrent"
             :choices="store.currentOptions"
             :disabled="store.loading || !allOptionsReady"
             :option-ids="store.currentPage?.optionIds || []"

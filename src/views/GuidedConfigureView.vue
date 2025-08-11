@@ -6,6 +6,7 @@ import UserInput from '@/components/UserInput.vue'
 import { useStoryConfigStore } from '@/stores/storyConfig'
 import { useStoryStore } from '@/stores/story'
 import { useAuthStore } from '@/stores/auth'
+import { apiUrl } from '@/lib/api'
 
 // Steps for guided configuration
 const steps = [
@@ -104,7 +105,7 @@ async function fetchSuggestions() {
   const id = await story.ensureBook()
 
   try {
-    const r = await fetch(`/api/books/${id}/config?s=${encodeURIComponent(step.id)}`, {
+    const r = await fetch(apiUrl(`/api/books/${id}/config?s=${encodeURIComponent(step.id)}`), {
       method: 'GET',
       signal: controller.signal,
       headers: await auth.authHeaders(),
@@ -139,7 +140,7 @@ async function saveValue(stepId: StepId, value: string) {
   // Persist to backend and update local store
   const id = await story.ensureBook()
   const body = { setting: stepId, value } as any
-  const r = await fetch(`/api/books/${id}/config`, {
+  const r = await fetch(apiUrl(`/api/books/${id}/config`), {
     method: 'POST',
     headers: await auth.authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),

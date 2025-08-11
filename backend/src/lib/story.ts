@@ -47,6 +47,7 @@ async function ensurePlan(
   const res = await chat([sys, usr], {
     response_format: { type: 'json_object' },
     reasoning_effort: 'medium',
+    tag: 'planner:points',
   })
   let data: any
   try {
@@ -107,7 +108,10 @@ async function expandAllSubsteps(
     ].join('\n'),
   }
 
-  const res = await chat([sys, usr], { response_format: { type: 'json_object' } })
+  const res = await chat([sys, usr], {
+    response_format: { type: 'json_object' },
+    tag: 'planner:substeps',
+  })
   let data: any
   try {
     data = JSON.parse(res.content)
@@ -187,6 +191,7 @@ async function insertIntroSubstepsForAllPoints(
       response_format: { type: 'json_object' },
       model: 'gpt-5-mini',
       reasoning_effort: 'low',
+      tag: 'intro:insert',
     })
     let data: any
     try {
@@ -255,26 +260,37 @@ function mergeNotes(existing: string[], delta: string[]): string[] {
   return Array.from(new Set([...(existing || []), ...delta]))
 }
 
-async function verifySubstep(passage: string, subText: string): Promise<boolean> {
+async function verifySubstep(
+  passage: string,
+  subText: string,
+  ctx?: { recent?: string[]; notes?: string[] },
+): Promise<boolean> {
   try {
     const verifySys: ChatMessage = {
       role: 'system',
       content:
         'You are a precise verifier. Decide if the provided story passage has accomplished the given planned sub-step. Respond STRICTLY as JSON: {"done": boolean}. Err on the side of returning true. We do not want to linger too long on the same thing.',
     }
+    const recent = Array.isArray(ctx?.recent) ? (ctx!.recent as string[]) : []
+    const notes = Array.isArray(ctx?.notes) ? (ctx!.notes as string[]) : []
     const verifyUsr: ChatMessage = {
       role: 'user',
       content: [
         `Planned sub-step to check: "${subText}"`,
-        'Story passage to evaluate:',
+        'Recent context (last up to 3 pages):',
+        ...recent.map((p, i) => `-- Context ${i + 1} --\n${p}`),
+        'Memory notes (facts to consider for whether the step was achieved):',
+        ...notes.map((n) => `- ${n}`),
+        'Story passage to evaluate (current page):',
         passage,
-        'Question: Did this passage achieve the planned sub-step? Return JSON only.',
+        'Question: Considering the recent context and notes, did this passage achieve the planned sub-step? Return JSON only.',
       ].join('\n'),
     }
     const vr = await chat([verifySys, verifyUsr], {
       reasoning_effort: 'minimal',
       model: 'gpt-5-nano',
       response_format: { type: 'json_object' },
+      tag: 'verify:substep',
     })
     const verdict = JSON.parse(vr.content)
     return !!(verdict && typeof verdict.done === 'boolean' && verdict.done === true)
@@ -347,6 +363,7 @@ async function adaptPlanAfterChoice(
       reasoning_effort: 'medium',
       model: 'gpt-5',
       max_completion_tokens: 1200,
+      tag: 'plan:adapt',
     })
     let data: any
     try {
@@ -499,10 +516,9 @@ async function generatePage(
   sysContentParts.push(
     'Subtext: Let motive leak through diction, silence, and beats rather than explicit explanation. Do not explain the feeling; show its pressure.',
   )
+  let substepDirective: string | undefined
   if (chosen === 'substep' && subToAdvance) {
-    sysContentParts.push(
-      `This turn: subtly work toward this next planned sub-step: "${subToAdvance.text}". Remember: the reader is not aware of this planned step—do not assume they already know what's happening. Gently orient them and err slightly toward clarity using diegetic means (dialogue, internal thought, or concrete sensory description), not literal exposition. Weave it in naturally. Keep the focus slight; do not reveal any meta-planning or say you are following a plan.`,
-    )
+    substepDirective = `This turn: work toward this next planned sub-step: "${subToAdvance.text}". Remember: the reader is not aware of this planned step—do not assume they already know what's happening. Gently orient them and err slightly toward clarity using diegetic means (dialogue, internal thought, or concrete sensory description). Weave it in naturally. Do not reveal any meta-planning or say you are following a plan.`
   } else if (chosen === 'world') {
     sysContentParts.push(
       'This turn: slightly emphasize immersive world-building with small concrete sensory details. Keep it subtle and balanced; do not overdo description.',
@@ -535,6 +551,9 @@ async function generatePage(
     'Do not recap or explicitly repeat what already happened in earlier pages unless strictly necessary. Let the scene progress naturally and vary word choice to avoid repetition.',
     'If options are present, they must be exactly three and short. They must not be prefixed with anything. Just things like "go towards the water" or "ask her if she wants to dance" or "run away".',
   )
+  if (substepDirective) {
+    sysContentParts.push(substepDirective)
+  }
   const sys: ChatMessage = {
     role: 'system',
     content: sysContentParts.filter(Boolean).join('\n'),
@@ -565,7 +584,11 @@ async function generatePage(
 
   const usr: ChatMessage = { role: 'user', content: userParts.join('\n') }
 
-  const res = await chat([sys, usr], { response_format: { type: 'json_object' } })
+  const res = await chat([sys, usr], {
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+    tag: params.nextChoice ? 'page:generate:branch' : 'page:generate:next',
+  })
   let data: any
   try {
     data = JSON.parse(res.content)
@@ -901,31 +924,103 @@ export async function ensureNextReady(bookId: string, index: number) {
   // Quick check if already ready
   const freshA = (await col.findOne({ _id })) as WithId<BookDoc>
   const sA: any = freshA?.story || {}
-  if (sA.branchCache?.[key]) return
+  if (sA.branchCache?.[key]) {
+    const at = sA.branchCacheAt?.[key] as any
+    if (at) {
+      const ts = new Date(at).getTime()
+      const age = Date.now() - ts
+      if (Number.isFinite(ts) && age > 120_000) {
+        console.warn(
+          `[NEXT READY] Outdated cache detected for ${key}; age=${age}ms. Clearing and regenerating...`,
+        )
+        await col.updateOne(
+          { _id },
+          {
+            $unset: {
+              [`story.branchCache.${key}`]: '',
+              [`story.branchCacheAt.${key}`]: '',
+            },
+            $set: { updatedAt: new Date() },
+          },
+        )
+      } else {
+        return
+      }
+    } else {
+      return
+    }
+  }
+  // If a previous pending generation is stale (>2m), clear it so we can retry
+  try {
+    const pendA = sA.branchPending?.[key] as any
+    if (pendA) {
+      const pendTs = new Date(pendA).getTime()
+      if (Number.isFinite(pendTs) && Date.now() - pendTs > 120_000) {
+        console.warn(
+          `[NEXT READY] Stale pending detected for ${key}; age=${Date.now() - pendTs}ms. Clearing to retry...`,
+        )
+        await col.updateOne({ _id, [`story.branchPending.${key}`]: new Date(pendTs) } as any, {
+          $unset: { [`story.branchPending.${key}`]: '' },
+          $set: { updatedAt: new Date() },
+        })
+      }
+    }
+  } catch {}
   // Try to claim pending slot atomically
-  const claim = await col.updateOne(
-    {
-      _id,
-      [`story.branchCache.${key}`]: { $exists: false },
-      [`story.branchPending.${key}`]: { $exists: false },
-    } as any,
-    { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
-  )
-  if (claim.matchedCount === 0) {
-    // Someone else is generating; wait until done or timeout
-    const deadline = Date.now() + 90_000
+  let weOwnClaim = false
+  {
+    const claim = await col.updateOne(
+      {
+        _id,
+        [`story.branchCache.${key}`]: { $exists: false },
+        [`story.branchPending.${key}`]: { $exists: false },
+      } as any,
+      { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
+    )
+    weOwnClaim = claim.matchedCount > 0
+  }
+  if (!weOwnClaim) {
+    // Someone else is generating; wait until done or try to take over if stale
+    const deadline = Date.now() + 240_000
+    console.log(`[NEXT READY] Waiting for pending generation for ${key} ...`)
     while (Date.now() < deadline) {
       const cur = (await col.findOne({ _id })) as WithId<BookDoc>
       const ss: any = cur?.story || {}
       if (ss.branchCache?.[key]) return
+      const pend = ss.branchPending?.[key] as any
+      if (pend) {
+        const ts = new Date(pend).getTime()
+        const age = Date.now() - ts
+        if (Number.isFinite(ts) && age > 120_000) {
+          // Attempt to take over by atomically replacing stale timestamp
+          console.warn(`[NEXT READY] Taking over stale pending for ${key}; age=${age}ms`)
+          const take = await col.updateOne(
+            {
+              _id,
+              [`story.branchCache.${key}`]: { $exists: false },
+              [`story.branchPending.${key}`]: new Date(ts),
+            } as any,
+            { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
+          )
+          if (take.matchedCount > 0) {
+            weOwnClaim = true
+            break
+          }
+        }
+      }
       await sleep(300)
     }
-    throw new Error('Timeout waiting for pending generation')
+    if (!weOwnClaim) {
+      console.error(`[NEXT READY] Timeout waiting for pending generation for ${key}`)
+      throw new Error('Timeout waiting for pending generation')
+    }
   }
   // We own the claim; generate
   try {
+    console.log(`[NEXT READY] Generating ${key} ...`)
     const curDoc = (await col.findOne({ _id })) as WithId<BookDoc>
     await verifyPendingBeforeNext(col, _id, curDoc)
+    const startedGen = Date.now()
     const gp = await generatePage(curDoc, {
       upToIndex: index,
       optionBaseIndex: index + 1,
@@ -934,16 +1029,22 @@ export async function ensureNextReady(bookId: string, index: number) {
     await col.updateOne(
       { _id },
       {
-        $set: { [`story.branchCache.${key}`]: gp, updatedAt: new Date() },
+        $set: {
+          [`story.branchCache.${key}`]: gp,
+          [`story.branchCacheAt.${key}`]: new Date(),
+          updatedAt: new Date(),
+        },
         $unset: { [`story.branchPending.${key}`]: '' },
       },
     )
+    console.log(`[NEXT READY] Generated ${key} in ${Date.now() - startedGen}ms`)
   } catch (e) {
     // Release claim on failure to allow retry
     await col.updateOne(
       { _id },
       { $unset: { [`story.branchPending.${key}`]: '' }, $set: { updatedAt: new Date() } },
     )
+    console.error(`[NEXT READY] Generation failed for ${key}:`, (e as any)?.message || e)
     throw e
   }
 }
@@ -998,7 +1099,17 @@ async function verifyPendingBeforeNext(
     const s: any = doc.story || {}
     const pv = s.pendingVerify
     if (!pv) return
-    const done = await verifySubstep(pv.passage, pv.subText)
+    // Build context: last up to 3 pages (including current) and persistent notes
+    const pages: any[] = Array.isArray(s.pages) ? s.pages : []
+    const lastIdx = Number.isInteger(s.index) ? s.index : pages.length - 1
+    const boundedLast = Math.max(0, Math.min(pages.length - 1, Number(lastIdx)))
+    const start = Math.max(0, boundedLast - 3)
+    const recent = pages
+      .slice(start, boundedLast)
+      .map((p) => String((p as any)?.passage || ''))
+      .filter((t) => t.trim().length > 0)
+    const notes: string[] = Array.isArray(s.notes) ? (s.notes as any[]).map((n) => String(n)) : []
+    const done = await verifySubstep(pv.passage, pv.subText, { recent, notes })
     if (done) {
       await markSubstepDone(col, _id, doc, pv.pointIndex, pv.subIndex)
     }
@@ -1019,7 +1130,10 @@ async function pruneBranchCache(col: Collection<BookDoc>, _id: ObjectId) {
   const toDelete: Record<string, ''> = {}
   for (const k of Object.keys(story.branchCache)) {
     const n = parseInt(k.split(':')[0] || '-1', 10)
-    if (!Number.isFinite(n) || n > idx) toDelete[`story.branchCache.${k}`] = ''
+    if (!Number.isFinite(n) || n > idx) {
+      toDelete[`story.branchCache.${k}`] = ''
+      toDelete[`story.branchCacheAt.${k}`] = ''
+    }
   }
   if (Object.keys(toDelete).length) {
     await col.updateOne({ _id }, { $unset: toDelete, $set: { updatedAt: new Date() } })
@@ -1032,6 +1146,7 @@ async function precomputeBranches(
   pageIndex: number,
   items: { optionId: string; text: string }[],
 ) {
+  console.log('call precompute')
   try {
     // Refresh doc for generation context
     const doc = (await col.findOne({ _id })) as WithId<BookDoc>
@@ -1039,18 +1154,35 @@ async function precomputeBranches(
     const tasks = items.map(async ({ optionId, text }) => {
       try {
         const key = `${pageIndex}:${optionId}`
+        const staleBefore = new Date(Date.now() - 120_000)
+        // Check for stale cache and log intent to refresh
+        try {
+          const check = (await col.findOne(
+            { _id },
+            { projection: { story: 1 } },
+          )) as WithId<BookDoc>
+          const at = (check as any)?.story?.branchCacheAt?.[key]
+          if (at && new Date(at).getTime() <= staleBefore.getTime()) {
+            console.warn(`[BRANCH PREC] Outdated cache detected for ${key}; refreshing...`)
+          }
+        } catch {}
         // Claim pending; skip if someone else is working or already ready
         const claim = await col.updateOne(
           {
             _id,
-            [`story.branchCache.${key}`]: { $exists: false },
             [`story.branchPending.${key}`]: { $exists: false },
+            $or: [
+              { [`story.branchCache.${key}`]: { $exists: false } },
+              { [`story.branchCacheAt.${key}`]: { $lte: staleBefore } },
+            ],
           } as any,
           { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
         )
         if (claim.matchedCount === 0) return
+        console.log(`[BRANCH PREC] Generating ${key} ...`)
         const curDoc = (await col.findOne({ _id })) as WithId<BookDoc>
         await verifyPendingBeforeNext(col, _id, curDoc)
+        const startedGen = Date.now()
         const gp = await generatePage(curDoc, {
           upToIndex: pageIndex,
           optionBaseIndex: pageIndex + 1,
@@ -1060,14 +1192,50 @@ async function precomputeBranches(
         await col.updateOne(
           { _id },
           {
-            $set: { [`story.branchCache.${key}`]: gp, updatedAt: new Date() },
+            $set: {
+              [`story.branchCache.${key}`]: gp,
+              [`story.branchCacheAt.${key}`]: new Date(),
+              updatedAt: new Date(),
+            },
             $unset: { [`story.branchPending.${key}`]: '' },
           },
         )
+        console.log(`[BRANCH PREC] Generated ${key} in ${Date.now() - startedGen}ms`)
       } catch {}
     })
     await Promise.allSettled(tasks)
   } catch {}
+}
+
+// Fire-and-forget helper to ensure option branches at a given index are precomputed if missing or outdated
+export async function ensureOptionsPrecompute(bookId: string, index: number) {
+  console.log('ensureOptionsPrecompute')
+  const col = await getBooksCollection()
+  const _id = new ObjectId(bookId)
+  const doc = (await col.findOne({ _id })) as WithId<BookDoc>
+  const story: any = doc?.story
+  if (!story) return
+  const page = story?.pages?.[index]
+  if (!page?.optionIds || !page?.options || page.optionIds.length !== page.options.length) return
+  const staleBefore = new Date(Date.now() - 120_000)
+  const optionsById = new Map<string, string>()
+  for (const o of page.options) optionsById.set(o.id, o.text)
+  const items: { optionId: string; text: string }[] = page.optionIds
+    .map((oid: string) => ({ optionId: oid, text: optionsById.get(oid) as string }))
+    .filter((x: { optionId: string; text: string }) => !!x.text)
+  const missingOrStale = items.filter(({ optionId }: { optionId: string }) => {
+    const key = `${index}:${optionId}`
+    const has = !!story.branchCache?.[key]
+    const at = story.branchCacheAt?.[key]
+    if (!has) return true
+    if (at && new Date(at).getTime() <= staleBefore.getTime()) return true
+    return false
+  })
+  console.log('ensureOptionsPrecompute', missingOrStale.length)
+  if (missingOrStale.length === 0) return
+  // Kick off precompute without blocking the request
+  // Errors are swallowed inside precomputeBranches; also guard here.
+  precomputeBranches(col, _id, index, missingOrStale).catch(() => {})
 }
 
 async function precomputeNext(col: Collection<BookDoc>, _id: ObjectId, pageIndex: number) {
@@ -1076,16 +1244,29 @@ async function precomputeNext(col: Collection<BookDoc>, _id: ObjectId, pageIndex
     const doc = (await col.findOne({ _id })) as WithId<BookDoc>
     if (!doc?.story) return
     const key = `${pageIndex}:__next__`
+    const staleBefore = new Date(Date.now() - 120_000)
+    // If cache exists but is outdated, allow a refresh generation
     const claim = await col.updateOne(
       {
         _id,
-        [`story.branchCache.${key}`]: { $exists: false },
         [`story.branchPending.${key}`]: { $exists: false },
+        $or: [
+          { [`story.branchCache.${key}`]: { $exists: false } },
+          { [`story.branchCacheAt.${key}`]: { $lte: staleBefore } },
+        ],
       } as any,
       { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
     )
     if (claim.matchedCount === 0) return
+    if ((doc as any)?.story?.branchCacheAt?.[key]) {
+      const at = new Date((doc as any).story.branchCacheAt[key]).getTime()
+      if (Number.isFinite(at) && at <= staleBefore.getTime()) {
+        console.warn(`[NEXT PREC] Outdated cache detected for ${key}; refreshing...`)
+      }
+    }
+    console.log(`[NEXT PREC] Generating ${key} ...`)
     await verifyPendingBeforeNext(col, _id, doc)
+    const startedGen = Date.now()
     const gp = await generatePage(doc, {
       upToIndex: pageIndex,
       optionBaseIndex: pageIndex + 1,
@@ -1094,9 +1275,14 @@ async function precomputeNext(col: Collection<BookDoc>, _id: ObjectId, pageIndex
     await col.updateOne(
       { _id },
       {
-        $set: { [`story.branchCache.${key}`]: gp, updatedAt: new Date() },
+        $set: {
+          [`story.branchCache.${key}`]: gp,
+          [`story.branchCacheAt.${key}`]: new Date(),
+          updatedAt: new Date(),
+        },
         $unset: { [`story.branchPending.${key}`]: '' },
       },
     )
+    console.log(`[NEXT PREC] Generated ${key} in ${Date.now() - startedGen}ms`)
   } catch {}
 }

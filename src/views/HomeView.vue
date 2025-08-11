@@ -3,6 +3,7 @@ import { onMounted, ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useStoryStore } from '@/stores/story'
+import { apiUrl } from '@/lib/api'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -29,7 +30,7 @@ async function loadBooks() {
   loading.value = true
   error.value = null
   try {
-    const r = await fetch('/api/books', { headers: await auth.authHeaders() })
+    const r = await fetch(apiUrl('/api/books'), { headers: await auth.authHeaders() })
     if (!r.ok) throw new Error('Failed to load books')
     const j = await r.json()
     books.value = Array.isArray(j?.items) ? j.items : []

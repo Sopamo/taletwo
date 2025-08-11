@@ -1,8 +1,8 @@
- 
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { defineStore } from 'pinia'
 import { useStorage, StorageSerializers } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
+import { apiUrl } from '@/lib/api'
 // Frontend no longer performs LLM calls; it delegates to backend REST endpoints.
 // Keep other stores decoupled here.
 
@@ -62,7 +62,10 @@ export const useStoryStore = defineStore('story', () => {
   const canGoNext = computed(() => {
     const cp = currentPage.value
     if (!cp) return false
-    return !(cp.options && cp.options.length)
+    // Only block Next when you're at the tail and the current page offers choices.
+    const isTail = index.value === Math.max(pages.value.length - 1, 0)
+    const hasChoices = !!(cp.options && cp.options.length)
+    return !(isTail && hasChoices)
   })
 
   // Backend handles branch pre-generation/caching; always allow rendering choices if present.
@@ -88,9 +91,12 @@ export const useStoryStore = defineStore('story', () => {
       const id = await ensureBook()
       const idx = index.value
       const auth = useAuthStore()
-      const r = await fetch(`/api/books/${id}/story/ready?index=${encodeURIComponent(String(idx))}` , {
-        headers: await auth.authHeaders(),
-      })
+      const r = await fetch(
+        apiUrl(`/api/books/${id}/story/ready?index=${encodeURIComponent(String(idx))}`),
+        {
+          headers: await auth.authHeaders(),
+        },
+      )
       if (!r.ok) throw new Error('ready poll failed')
       const j = await r.json()
       const ready = j?.ready || { next: false, options: {} }
@@ -99,7 +105,8 @@ export const useStoryStore = defineStore('story', () => {
       // If we're at the tail with no choices and Next is ready, or if all options are ready for the current page, stop polling.
       const isTail = index.value === Math.max(pages.value.length - 1, 0)
       const hasChoices = (currentPage.value?.options?.length ?? 0) > 0
-      const allOptsReady = hasChoices && (currentPage.value?.optionIds ?? []).every((oid) => !!optionsReady.value[oid])
+      const allOptsReady =
+        hasChoices && (currentPage.value?.optionIds ?? []).every((oid) => !!optionsReady.value[oid])
       if ((isTail && !hasChoices && nextReady.value) || (hasChoices && allOptsReady)) {
         stopReadyPolling()
       }
@@ -118,7 +125,8 @@ export const useStoryStore = defineStore('story', () => {
     // If we're already satisfied for this view, don't start polling
     const isTail = index.value === Math.max(pages.value.length - 1, 0)
     const hasChoices = (currentPage.value?.options?.length ?? 0) > 0
-    const allOptsReady = hasChoices && (currentPage.value?.optionIds ?? []).every((oid) => !!optionsReady.value[oid])
+    const allOptsReady =
+      hasChoices && (currentPage.value?.optionIds ?? []).every((oid) => !!optionsReady.value[oid])
     if ((isTail && !hasChoices && nextReady.value) || (hasChoices && allOptsReady)) return
     // Initial immediate poll, then interval
     pollReadyOnce()
@@ -166,7 +174,10 @@ export const useStoryStore = defineStore('story', () => {
   async function ensureBook(): Promise<string> {
     if (bookId.value) return bookId.value
     const auth = useAuthStore()
-    const r = await fetch('/api/books', { method: 'POST', headers: await auth.authHeaders() })
+    const r = await fetch(apiUrl('/api/books'), {
+      method: 'POST',
+      headers: await auth.authHeaders(),
+    })
     if (!r.ok) throw new Error('Failed to create book')
     const j = await r.json()
     if (!j?.id) throw new Error('Invalid create book response')
@@ -176,7 +187,10 @@ export const useStoryStore = defineStore('story', () => {
 
   async function createNewBook(): Promise<string> {
     const auth = useAuthStore()
-    const r = await fetch('/api/books', { method: 'POST', headers: await auth.authHeaders() })
+    const r = await fetch(apiUrl('/api/books'), {
+      method: 'POST',
+      headers: await auth.authHeaders(),
+    })
     if (!r.ok) throw new Error('Failed to create book')
     const j = await r.json()
     if (!j?.id) throw new Error('Invalid create book response')
@@ -199,7 +213,7 @@ export const useStoryStore = defineStore('story', () => {
   } | null
   async function fetchSnapshot(id: string): Promise<StorySnapshot> {
     const auth = useAuthStore()
-    const r = await fetch(`/api/books/${id}/story`, { headers: await auth.authHeaders() })
+    const r = await fetch(apiUrl(`/api/books/${id}/story`), { headers: await auth.authHeaders() })
     if (!r.ok) throw new Error('Failed to fetch story')
     const j = await r.json()
     return (j?.story ?? null) as StorySnapshot
@@ -251,7 +265,10 @@ export const useStoryStore = defineStore('story', () => {
         return
       }
       const auth = useAuthStore()
-      const r = await fetch(`/api/books/${id}/story/start`, { method: 'POST', headers: await auth.authHeaders() })
+      const r = await fetch(apiUrl(`/api/books/${id}/story/start`), {
+        method: 'POST',
+        headers: await auth.authHeaders(),
+      })
       if (!r.ok) throw new Error('Failed to start story')
       const j = await r.json()
       applySnapshot(j?.story ?? null)
@@ -286,7 +303,10 @@ export const useStoryStore = defineStore('story', () => {
         return
       }
       const auth = useAuthStore()
-      const r = await fetch(`/api/books/${id}/story/start`, { method: 'POST', headers: await auth.authHeaders() })
+      const r = await fetch(apiUrl(`/api/books/${id}/story/start`), {
+        method: 'POST',
+        headers: await auth.authHeaders(),
+      })
       if (!r.ok) throw new Error('Failed to start story')
       const j = await r.json()
       applySnapshot(j?.story ?? null)
@@ -324,7 +344,7 @@ export const useStoryStore = defineStore('story', () => {
     error.value = null
     try {
       const auth = useAuthStore()
-      const r = await fetch(`/api/books/${id}/story/next`, {
+      const r = await fetch(apiUrl(`/api/books/${id}/story/next`), {
         method: 'POST',
         headers: await auth.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ index: index.value }),
@@ -353,13 +373,11 @@ export const useStoryStore = defineStore('story', () => {
     error.value = null
     try {
       const auth = useAuthStore()
-      const r = await fetch(`/api/books/${id}/story/choose`, {
+      const r = await fetch(apiUrl(`/api/books/${id}/story/choose`), {
         method: 'POST',
         headers: await auth.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(
-          optionId
-            ? { index: index.value, optionId }
-            : { index: index.value, text: label },
+          optionId ? { index: index.value, optionId } : { index: index.value, text: label },
         ),
       })
       if (!r.ok) throw new Error('Failed to apply choice')

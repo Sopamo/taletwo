@@ -2,7 +2,14 @@
 import { ObjectId } from 'mongodb'
 import { getBooksCollection } from './lib/db'
 import { getConfigSuggestions } from './lib/llm'
-import { chooseStory, nextStory, startStory, toStorySnapshot, ensureNextReady } from './lib/story'
+import {
+  chooseStory,
+  nextStory,
+  startStory,
+  toStorySnapshot,
+  ensureNextReady,
+  ensureOptionsPrecompute,
+} from './lib/story'
 import type { BookDoc, ConfigFieldId } from './types'
 import { requireAuth } from './lib/auth'
 
@@ -230,6 +237,8 @@ const server = Bun.serve({
           return json({ error: e?.message || 'Failed to prepare readiness' }, { status: 500 })
         }
       }
+      // Kick off background precompute for missing/outdated option branches at this index
+      ensureOptionsPrecompute(id, index).catch(() => {})
       const branchCache = story?.branchCache || {}
       const options: Record<string, boolean> = {}
       const page = story?.pages?.[index]
