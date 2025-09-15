@@ -47,6 +47,7 @@ async function ensurePlan(
   const res = await chat([sys, usr], {
     response_format: { type: 'json_object' },
     reasoning_effort: 'medium',
+    model: 'gpt-5-mini',
     tag: 'planner:points',
   })
   let data: any
@@ -109,6 +110,8 @@ async function expandAllSubsteps(
   }
 
   const res = await chat([sys, usr], {
+    model: 'gpt-5-mini',
+    reasoning_effort: 'low',
     response_format: { type: 'json_object' },
     tag: 'planner:substeps',
   })
@@ -511,7 +514,7 @@ async function generatePage(
     'Beats & attribution: Weave brief action/reaction beats into the same sentence or the next to track speaker and status shifts. Prefer plain tags ("said", "asked"); keep names light; avoid ornate tags.',
   )
   sysContentParts.push(
-    'Cadence: Favor 2–4 sentences per turn on average; mix one short with one longer, and let clauses link when useful. Reserve single-line volleys for heat; avoid machine-gun alternation.',
+    'Cadence: Reserve single-line volleys for heat; avoid machine-gun alternation.',
   )
   sysContentParts.push(
     'Subtext: Let motive leak through diction, silence, and beats rather than explicit explanation. Do not explain the feeling; show its pressure.',
@@ -546,7 +549,7 @@ async function generatePage(
   sysContentParts.push(
     'Always answer strictly as JSON with fields: {"passage": string, "summary": string, "notes": string[], "options"?: [string, string, string]}.',
     'The "notes" array should contain at most 2 short bullet points of factual details to remember for future coherence (e.g., names, goals, discovered clues).',
-    'Passage should be 6-8 short paragraphs.',
+    'Passage should be around 20 sentences.',
     'Write in a clear, approachable voice—concrete and to the point. Avoid flowery or overly abstract language. Keep it readable and engaging without being simplistic.',
     'Do not recap or explicitly repeat what already happened in earlier pages unless strictly necessary. Let the scene progress naturally and vary word choice to avoid repetition.',
     'If options are present, they must be exactly three and short. They must not be prefixed with anything. Just things like "go towards the water" or "ask her if she wants to dance" or "run away".',
@@ -585,7 +588,7 @@ async function generatePage(
   const usr: ChatMessage = { role: 'user', content: userParts.join('\n') }
 
   const res = await chat([sys, usr], {
-    reasoning_effort: 'low',
+    model: 'gpt-5-chat-latest',
     response_format: { type: 'json_object' },
     tag: params.nextChoice ? 'page:generate:branch' : 'page:generate:next',
   })
@@ -742,20 +745,21 @@ async function commitPage(
   // After committing a page, prune any stale branch cache entries (older page indices)
   await pruneBranchCache(col, _id)
   if (opts?.precompute !== false) {
-    // Precompute the default "Next" continuation for this page (fire-and-forget)
-    precomputeNext(col, _id, index).catch(() => {})
+    const ids0 = Array.isArray(gp.page.optionIds) ? gp.page.optionIds : null
+    const opts0 = Array.isArray(gp.page.options) ? gp.page.options : null
+    const hasChoices = !!(ids0 && opts0 && ids0.length === opts0.length && opts0.length > 0)
+    // Only precompute default Next if this page does NOT offer choices
+    if (!hasChoices) {
+      precomputeNext(col, _id, index).catch(() => {})
+    }
     // If the committed page has choices, precompute branches in the background
-    if (
-      gp.page.optionIds &&
-      gp.page.options &&
-      gp.page.optionIds.length === gp.page.options.length
-    ) {
+    if (hasChoices) {
       // Fire-and-forget; don't block the response
       precomputeBranches(
         col,
         _id,
         index,
-        gp.page.optionIds.map((id, i) => ({ optionId: id, text: gp.page.options![i] })),
+        ids0!.map((id, i) => ({ optionId: id, text: opts0![i] })),
       ).catch(() => {})
     }
   }
@@ -770,6 +774,15 @@ export async function nextStory(bookId: string, index: number) {
   const maxIndex = (story.pages?.length ?? 0) - 1
   if (!Number.isInteger(index) || index < -1 || index > maxIndex)
     throw new Error(`Invalid index ${index}; must be between -1 and ${maxIndex}`)
+  // Do not allow advancing via default next when the page presents choices
+  try {
+    const page = story.pages?.[index]
+    const ids = Array.isArray(page?.optionIds) ? (page!.optionIds as any[]) : null
+    const opts = Array.isArray(page?.options) ? (page!.options as any[]) : null
+    if (ids && opts && ids.length === opts.length && opts.length > 0) {
+      throw new Error('Cannot advance via next on a choice page')
+    }
+  } catch {}
   // Try to use precomputed default-next if available for the provided index
   if (story) {
     const key = `${index}:__next__`
@@ -834,20 +847,18 @@ export async function chooseStory(
             { _id },
             { $unset: { planUpdating: '' }, $set: { updatedAt: new Date() } },
           )
-          precomputeNext(col, _id, committedIndex).catch(() => {})
-          if (
-            cached.page.optionIds &&
-            cached.page.options &&
-            cached.page.optionIds.length === cached.page.options.length
-          ) {
+          const ids1 = Array.isArray(cached.page.optionIds) ? cached.page.optionIds : null
+          const opts1 = Array.isArray(cached.page.options) ? cached.page.options : null
+          const hasChoices = !!(ids1 && opts1 && ids1.length === opts1.length && opts1.length > 0)
+          if (!hasChoices) {
+            precomputeNext(col, _id, committedIndex).catch(() => {})
+          }
+          if (hasChoices) {
             precomputeBranches(
               col,
               _id,
               committedIndex,
-              cached.page.optionIds.map((id: string, i: number) => ({
-                optionId: id,
-                text: cached.page.options![i],
-              })),
+              ids1!.map((id: string, i: number) => ({ optionId: id, text: opts1![i] })),
             ).catch(() => {})
           }
         }
@@ -882,17 +893,18 @@ export async function chooseStory(
         { _id },
         { $unset: { planUpdating: '' }, $set: { updatedAt: new Date() } },
       )
-      precomputeNext(col, _id, committedIndex).catch(() => {})
-      if (
-        gp.page.optionIds &&
-        gp.page.options &&
-        gp.page.optionIds.length === gp.page.options.length
-      ) {
+      const ids2 = Array.isArray(gp.page.optionIds) ? gp.page.optionIds : null
+      const opts2 = Array.isArray(gp.page.options) ? gp.page.options : null
+      const hasChoices = !!(ids2 && opts2 && ids2.length === opts2.length && opts2.length > 0)
+      if (!hasChoices) {
+        precomputeNext(col, _id, committedIndex).catch(() => {})
+      }
+      if (hasChoices) {
         precomputeBranches(
           col,
           _id,
           committedIndex,
-          gp.page.optionIds.map((id, i) => ({ optionId: id, text: gp.page.options![i] })),
+          ids2!.map((id, i) => ({ optionId: id, text: opts2![i] })),
         ).catch(() => {})
       }
     }
@@ -913,6 +925,13 @@ export async function ensureNextReady(bookId: string, index: number) {
   const maxIndex = (story.pages?.length ?? 0) - 1
   if (!Number.isInteger(index) || index < -1 || index > maxIndex)
     throw new Error(`Invalid index ${index}; must be between -1 and ${maxIndex}`)
+  // If the page at this index presents choices, do not generate a default next branch.
+  try {
+    const p = (story.pages || [])[index]
+    const ids = Array.isArray(p?.optionIds) ? (p.optionIds as any[]) : null
+    const opts = Array.isArray(p?.options) ? (p.options as any[]) : null
+    if (ids && opts && ids.length === opts.length && opts.length > 0) return
+  } catch {}
   const key = `${index}:__next__`
   // Ensure maps exist if they were null
   if (!story.branchCache || typeof story.branchCache !== 'object') {
@@ -1152,8 +1171,8 @@ async function precomputeBranches(
     const doc = (await col.findOne({ _id })) as WithId<BookDoc>
     if (!doc?.story) return
     const tasks = items.map(async ({ optionId, text }) => {
+      const key = `${pageIndex}:${optionId}`
       try {
-        const key = `${pageIndex}:${optionId}`
         const staleBefore = new Date(Date.now() - 120_000)
         // Check for stale cache and log intent to refresh
         try {
@@ -1166,19 +1185,70 @@ async function precomputeBranches(
             console.warn(`[BRANCH PREC] Outdated cache detected for ${key}; refreshing...`)
           }
         } catch {}
-        // Claim pending; skip if someone else is working or already ready
-        const claim = await col.updateOne(
-          {
-            _id,
-            [`story.branchPending.${key}`]: { $exists: false },
-            $or: [
-              { [`story.branchCache.${key}`]: { $exists: false } },
-              { [`story.branchCacheAt.${key}`]: { $lte: staleBefore } },
-            ],
-          } as any,
-          { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
-        )
-        if (claim.matchedCount === 0) return
+        // If a previous pending is stale (>2m), clear it to allow retry
+        try {
+          const pend = (doc as any)?.story?.branchPending?.[key]
+          if (pend) {
+            const ts = new Date(pend).getTime()
+            if (Number.isFinite(ts) && ts <= staleBefore.getTime()) {
+              await col.updateOne({ _id, [`story.branchPending.${key}`]: new Date(ts) } as any, {
+                $unset: { [`story.branchPending.${key}`]: '' },
+                $set: { updatedAt: new Date() },
+              })
+              console.warn(`[BRANCH PREC] Cleared stale pending for ${key}`)
+            }
+          }
+        } catch {}
+        // Try to claim pending; allow if cache missing or outdated
+        let own = false
+        {
+          const claim = await col.updateOne(
+            {
+              _id,
+              [`story.branchPending.${key}`]: { $exists: false },
+              $or: [
+                { [`story.branchCache.${key}`]: { $exists: false } },
+                { [`story.branchCacheAt.${key}`]: { $lte: staleBefore } },
+              ],
+            } as any,
+            { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
+          )
+          own = claim.matchedCount > 0
+        }
+        // If not claimed, attempt a stale takeover
+        if (!own) {
+          try {
+            const fresh = (await col.findOne(
+              { _id },
+              { projection: { story: 1 } },
+            )) as WithId<BookDoc>
+            const pend = (fresh as any)?.story?.branchPending?.[key]
+            const at = (fresh as any)?.story?.branchCacheAt?.[key]
+            const hasFreshCache = !!(fresh as any)?.story?.branchCache?.[key]
+            const isStaleCache = at && new Date(at).getTime() <= staleBefore.getTime()
+            if (!hasFreshCache && pend) {
+              const ts = new Date(pend).getTime()
+              if (Number.isFinite(ts) && ts <= staleBefore.getTime()) {
+                const take = await col.updateOne(
+                  {
+                    _id,
+                    [`story.branchCache.${key}`]: { $exists: false },
+                    [`story.branchPending.${key}`]: new Date(ts),
+                  } as any,
+                  { $set: { [`story.branchPending.${key}`]: new Date(), updatedAt: new Date() } },
+                )
+                own = take.matchedCount > 0
+                if (own) console.warn(`[BRANCH PREC] Took over stale pending for ${key}`)
+              }
+            }
+            // If cache exists but is stale, ensure we will refresh on next loop
+            if (!own && hasFreshCache && isStaleCache) {
+              // nothing to do; another loop will refresh
+              return
+            }
+          } catch {}
+        }
+        if (!own) return
         console.log(`[BRANCH PREC] Generating ${key} ...`)
         const curDoc = (await col.findOne({ _id })) as WithId<BookDoc>
         await verifyPendingBeforeNext(col, _id, curDoc)
@@ -1201,7 +1271,19 @@ async function precomputeBranches(
           },
         )
         console.log(`[BRANCH PREC] Generated ${key} in ${Date.now() - startedGen}ms`)
-      } catch {}
+      } catch (e) {
+        // Release claim on failure to allow retry
+        try {
+          await col.updateOne(
+            { _id },
+            { $unset: { [`story.branchPending.${key}`]: '' }, $set: { updatedAt: new Date() } },
+          )
+        } catch {}
+        console.error(
+          `[BRANCH PREC] Generation failed for ${pageIndex}:${optionId}:`,
+          (e as any)?.message || e,
+        )
+      }
     })
     await Promise.allSettled(tasks)
   } catch {}
@@ -1218,11 +1300,9 @@ export async function ensureOptionsPrecompute(bookId: string, index: number) {
   const page = story?.pages?.[index]
   if (!page?.optionIds || !page?.options || page.optionIds.length !== page.options.length) return
   const staleBefore = new Date(Date.now() - 120_000)
-  const optionsById = new Map<string, string>()
-  for (const o of page.options) optionsById.set(o.id, o.text)
   const items: { optionId: string; text: string }[] = page.optionIds
-    .map((oid: string) => ({ optionId: oid, text: optionsById.get(oid) as string }))
-    .filter((x: { optionId: string; text: string }) => !!x.text)
+    .map((oid: string, i: number) => ({ optionId: oid, text: String(page.options[i] ?? '') }))
+    .filter((x: { optionId: string; text: string }) => x.text.trim().length > 0)
   const missingOrStale = items.filter(({ optionId }: { optionId: string }) => {
     const key = `${index}:${optionId}`
     const has = !!story.branchCache?.[key]

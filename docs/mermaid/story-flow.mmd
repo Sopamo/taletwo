@@ -1,0 +1,40 @@
+flowchart TB
+  A[UI opens page or index changes] --> B[GET /api/books/:id/story/ready?index]
+  B --> C[ensureNextReady]
+  C --> XC{cache outdated > 2m?}
+  XC -->|yes| XU[clear outdated cache]
+  XU --> XN
+  XC -->|no| XN{next pending?}
+  XN -->|no| E[generatePage next]
+  XN -->|yes| XS{pending stale > 2m?}
+  XS -->|yes| XT[take over pending]
+  XT --> E
+  XS -->|no| EP[wait up to 4m]
+  EP -->|done| D[nextReady = true]
+  EP -->|timeout| XE[timeout error]
+  E --> F[cache index:__next__ and clear pending]
+  F --> D
+
+  C --> G[ensureOptionsPrecompute]
+  G --> H{for each optionId}
+  H --> OC{cache outdated > 2m?}
+  OC -->|yes| OU[mark refresh]
+  OC -->|no| OP
+  OU --> OP
+  OP --> OO{option pending?}
+  OO -->|yes| OS{pending stale > 2m?}
+  OS -->|yes| OT[take over pending]
+  OT --> I
+  OS -->|no| K[skip]
+  OO -->|no| I[mark pending and generate option]
+  I --> J[cache index:optionId and clear pending]
+
+  D --> L{User action}
+  L --> M[POST /api/books/:id/story/next index]
+  M --> N[Commit cached next page]
+  L --> O[POST /api/books/:id/story/choose index and optionId or text]
+  O --> P[Commit cached option page]
+  P --> Q[adaptPlanAfterChoice and insertIntroSubstepsForAllPoints]
+  Q --> R[pruneBranchCache for later indices]
+  N --> S[Return StorySnapshot and debugPlan]
+  R --> S

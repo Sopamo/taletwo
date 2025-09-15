@@ -203,7 +203,8 @@ const server = Bun.serve({
     }
 
     // GET /api/books/:id/story/ready?index=NUM — readiness of next and option branches for a specific index. (auth + ownership)
-    // If the default next branch is not ready, this endpoint will generate it and only return once ready.
+    // If the page at index has NO choices, this endpoint will generate the default next branch and only return once ready.
+    // If the page HAS choices, we skip generating the default next (since forward motion happens via choices) and only report option readiness.
     if (path.endsWith('/story/ready') && method === 'GET') {
       const id = path.split('/')[3]
       const _id = toObjectId(id)
@@ -225,30 +226,42 @@ const server = Bun.serve({
       const maxIndex = (story.pages?.length ?? 0) - 1
       if (index < -1 || index > maxIndex)
         return badRequest(`'index' must be between -1 and ${maxIndex}`)
-      const nextKey = `${index}:__next__`
-      if (!(story.branchCache?.[nextKey])) {
-        try {
-          // Generate and store the default next continuation for this index; blocks until done
-          await ensureNextReady(id, index)
-          // Refresh after generation
-          doc = await col.findOne({ _id })
-          story = doc?.story as any
-        } catch (e: any) {
-          return json({ error: e?.message || 'Failed to prepare readiness' }, { status: 500 })
+      // Determine if this page presents choices
+      const page = story?.pages?.[index]
+      const hasChoices = !!(
+        page?.optionIds &&
+        page?.options &&
+        page.optionIds.length === page.options.length &&
+        page.options.length > 0
+      )
+      let nextReadyFlag = false
+      // Only ensure default-next readiness for pages WITHOUT choices
+      if (!hasChoices) {
+        const nextKey = `${index}:__next__`
+        if (!(story.branchCache?.[nextKey])) {
+          try {
+            await ensureNextReady(id, index)
+            // Refresh after generation
+            doc = await col.findOne({ _id })
+            story = doc?.story as any
+          } catch (e: any) {
+            return json({ error: e?.message || 'Failed to prepare readiness' }, { status: 500 })
+          }
         }
+        const branchCache = story?.branchCache || {}
+        nextReadyFlag = !!branchCache[nextKey]
       }
       // Kick off background precompute for missing/outdated option branches at this index
       ensureOptionsPrecompute(id, index).catch(() => {})
       const branchCache = story?.branchCache || {}
       const options: Record<string, boolean> = {}
-      const page = story?.pages?.[index]
-      if (page?.optionIds && page?.options && page.optionIds.length === page.options.length) {
-        for (const oid of page.optionIds) {
+      if (hasChoices) {
+        for (const oid of page.optionIds as string[]) {
           const key = `${index}:${oid}`
           options[oid] = !!branchCache[key]
         }
       }
-      return json({ id, ready: { next: !!branchCache[nextKey], options } })
+      return json({ id, ready: { next: nextReadyFlag, options } })
     }
 
     // POST /api/books/:id/story/next — advance story one turn (no choice). Body: { index: number } (auth + ownership)

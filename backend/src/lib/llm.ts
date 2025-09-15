@@ -22,7 +22,7 @@ export async function chat(
   }
   if (opts.response_format) body.response_format = opts.response_format
   // Default reasoning effort to 'low' if not specified
-  body.reasoning_effort = opts.reasoning_effort ?? 'low'
+  if (opts.model !== 'gpt-5-chat-latest') body.reasoning_effort = opts.reasoning_effort ?? 'low'
   if (typeof opts.max_completion_tokens === 'number')
     body.max_completion_tokens = opts.max_completion_tokens
 

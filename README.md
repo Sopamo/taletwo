@@ -13,7 +13,7 @@ Interactive, branching stories generated with a plan-first LLM engine.
 
 - **Page generation**: Each page is produced by `generatePage()` using substep-focused prompts that keep the plan hidden from the reader while orienting diegetically. Global style guidance (lean, concrete prose; POV integrity; sentence discipline) is enforced via `buildSystemPromptFromConfig()`.
 
-- **Readiness and caching**: For every page index, the backend precomputes and caches the default continuation and option branches in `story.branchCache` using keys like `${index}:__next__` and `${index}:${optionId}`. `ensureNextReady()` blocks until the default next is ready; `ensureOptionsPrecompute()` warms missing option branches. A `branchPending` map prevents duplicate work.
+- **Readiness and caching**: For every page index, the backend precomputes and caches the default continuation and option branches in `story.branchCache` using keys like `${index}:__next__` and `${index}:${optionId}`. `ensureNextReady()` blocks until the default next is ready; `ensureOptionsPrecompute()` warms missing option branches. A `branchPending` map prevents duplicate work. Stale cache or pending entries older than 2 minutes are cleared or taken over; waiting for someone else’s generation times out after 4 minutes.
 
 - **UI gating**: The frontend polls `/api/books/:id/story/ready?index=...` and only enables the Next button when `next` is ready and choice buttons when their branches are ready. This guarantees immediate commits on click (no synchronous generation fallbacks). See `src/stores/story.ts`, `src/views/PlayView.vue`, and `src/components/ChoicesList.vue`.
 
@@ -24,6 +24,55 @@ Interactive, branching stories generated with a plan-first LLM engine.
 - **Suggestions and constraints**: Book setup suggestions come from `/api/books/:id/config?s=...`. For `books`, the model is constrained to US public‑domain titles and guarded at runtime. See `getConfigSuggestions()` in `backend/src/lib/llm.ts`.
 
 - **Diagnostics**: Each snapshot includes a `debugPlan` that the frontend logs as a compact Markdown summary for debugging.
+
+## Story generation flow
+
+```mermaid
+flowchart TB
+  A[UI opens page or index changes] --> B[GET /api/books/:id/story/ready?index]
+  B --> C[ensureNextReady]
+  C --> XC{cache outdated > 2m?}
+  XC -->|yes| XU[clear outdated cache]
+  XU --> XN
+  XC -->|no| XN{next pending?}
+  XN -->|no| E[generatePage next]
+  XN -->|yes| XS{pending stale > 2m?}
+  XS -->|yes| XT[take over pending]
+  XT --> E
+  XS -->|no| EP[wait up to 4m]
+  EP -->|done| D[nextReady = true]
+  EP -->|timeout| XE[timeout error]
+  E --> F[cache index:__next__ and clear pending]
+  F --> D
+
+  C --> G[ensureOptionsPrecompute]
+  G --> H{for each optionId}
+  H --> OC{cache outdated > 2m?}
+  OC -->|yes| OU[mark refresh]
+  OC -->|no| OP
+  OU --> OP
+  OP --> OO{option pending?}
+  OO -->|yes| OS{pending stale > 2m?}
+  OS -->|yes| OT[take over pending]
+  OT --> I
+  OS -->|no| K[skip]
+  OO -->|no| I[mark pending and generate option]
+  I --> J[cache index:optionId and clear pending]
+
+  D --> L{User action}
+  L --> M[POST /api/books/:id/story/next index]
+  M --> N[Commit cached next page]
+  L --> O[POST /api/books/:id/story/choose index and optionId or text]
+  O --> P[Commit cached option page]
+  P --> Q[adaptPlanAfterChoice and insertIntroSubstepsForAllPoints]
+  Q --> R[pruneBranchCache for later indices]
+  N --> S[Return StorySnapshot and debugPlan]
+  R --> S
+```
+
+Rendered version (for viewers without Mermaid support):
+
+![Story generation flow](public/story-flow.svg)
 
 ## Technology
 
